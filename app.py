@@ -1,62 +1,32 @@
-import os
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from fastapi.responses import JSONResponse
+from flask import Flask, request, jsonify
 import openai
+import os
 
-# === KONFIGURACJA ===
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    raise RuntimeError("Brakuje klucza OPENAI_API_KEY w zmiennych środowiskowych.")
-openai.api_key = OPENAI_API_KEY
+app = Flask(__name__)
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
-MODEL = "gpt-4"
+@app.route('/')
+def home():
+    return "Bot giełdowy działa. Wbij na /analyze."
 
-SYSTEM_PROMPT = """
-Zawsze działaj według struktury Deep Tree of Thoughts. Nie udzielaj odpowiedzi od razu – prowadz mnie przez proces decyzyjny krok po kroku:
+@app.route('/analyze', methods=['POST'])
+def analyze():
+    data = request.json
+    ticker = data.get('ticker', '').upper()
+    context = data.get('context', '')
 
-1. Zapytaj: „Jaki problem chcesz dziś przeanalizować?”
-2. Zapytaj: „Na ile szczegółowo mam myśleć?”
-   - Quick View
-   - Balanced
-   - Deep Dive
-3. Zapytaj: „Na czym chcesz się skupić?”
-   - Strategia, Potencjał, Bariery, Szybkie wygrane, Zasoby
-4. Wygeneruj 3–5 pomysłów (Idea-1, Idea-2...)
-5. Zrób podsumowanie (ocena potencjału, trudność, powiązania)
+    if not ticker:
+        return jsonify({"error": "Brakuje tickera."}), 400
 
-Nie przeskakuj żadnego etapu, nawet jeśli pytanie wygląda na oczywiste. Zawsze prowadź analizę spokojnie, jak dobry mentor.
-Jeśli poproszę „szybko”, pomiń pytania i przejdź od razu do generowania pomysłów, ale nadal opieraj się na strukturze Deep Tree of Thoughts.
-"""
+    prompt = (
+        f"Jesteś brutalnym analitykiem giełdowym. Oceń spółkę {ticker} z GPW.\n"
+        f"Kontekst: {context}\n"
+        "Powiedz: POMPA, BURA, KONSOLA czy inna padaka. Strategia: 'Pump & Exit', '12% i spierdalaj'. Krótko i konkretnie."
+    )
 
-app = FastAPI()
-
-# === MODELE DANYCH ===
-class RequestBody(BaseModel):
-    user_message: str
-    fast: bool = False  # opcjonalne "szybko"
-
-class ResponseBody(BaseModel):
-    bot_message: str
-
-# === ENDPOINT ===
-@app.post("/chat", response_model=ResponseBody)
-async def chat_endpoint(body: RequestBody):
-    try:
-        resp = await openai.ChatCompletion.acreate(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT if not body.fast else ""},
-                {"role": "user", "content": body.user_message}
-            ],
-            temperature=0.7,
-            max_tokens=500,
-        )
-    except openai.error.OpenAIError as e:
-        raise HTTPException(status_code=502, detail=f"OpenAI API error: {e}")
-    answer = resp.choices[0].message.content.strip()
-    return JSONResponse(content={"bot_message": answer})
-
-@app.get("/health")
-async def health():
-    return JSONResponse(content={"status": "ok"})
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=300
+    )
+    return jsonify({"ticker": ticker, "analysis": response['choices'][0]['message']['content']})
